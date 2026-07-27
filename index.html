@@ -100,6 +100,7 @@ svg{display:block;width:100%;overflow:visible}
 
 <div class="wrap">
   <div class="crumb" id="crumb"></div>
+  <div id="pendbanner"></div>
   <div id="view"></div>
   <div class="foot" id="foot"></div>
 </div>
@@ -151,14 +152,26 @@ const METRICS = {
 const KPI_TILES = ["totalSales","organicPct","spend","tacos","unitsOrdered","avgUnits","aov","cvr"];
 const CHART_METRICS = ["totalSales","ppcSales","spend","unitsOrdered","sessions","pageViews","impressions","clicks","ppcOrders","cvr","ctr","cpc","ppcCvr","acos","tacos","roas","aov"];
 const LTSF_CHART_METRICS = ["unitsOrdered","totalSales","ppcSales","organicSales","spend","sessions","pageViews","impressions","clicks","ppcOrders","cvr","ctr","cpc","ppcCvr","acos","tacos","roas","aov"];
+// metrics that depend on the (lagging) business/sales report; excluded on "sales-pending" days
+const SALES_SIDE = new Set(["totalSales","organicSales","organicPct","unitsOrdered","sessions","cvr","aov","avgUnits","pageViews","tacos"]);
+let PENDING = new Set();   // dates with ad data but no sales/traffic posted yet (Amazon report lag)
 
 /* ---- helpers ---- */
 function emptySum(){const o={};BASE.forEach(k=>o[k]=0);return o;}
 function addInto(sum,rec){BASE.forEach(k=>{if(typeof rec[k]==="number")sum[k]+=rec[k];});}
 function aggregate(daily,from,to){
   const s=emptySum();let has=false;
-  for(const d in daily){ if(d>=from&&d<=to){addInto(s,daily[d]);has=true;} }
+  for(const d in daily){ if(d>=from&&d<=to&&!PENDING.has(d)){addInto(s,daily[d]);has=true;} }
   return has?s:null;
+}
+function computePending(){
+  PENDING=new Set();
+  for(const d of DATES){
+    let sales=0,sess=0,units=0,ad=0;
+    for(const t in DAT.parents){const r=DAT.parents[t].daily[d];
+      if(r){sales+=r.totalSales||0;sess+=r.sessions||0;units+=r.unitsOrdered||0;ad+=(r.spend||0)+(r.impressions||0);}}
+    if(sales===0&&sess===0&&units===0&&ad>0) PENDING.add(d);   // ad data in, sales/traffic not posted
+  }
 }
 function computeDates(data){
   const set=new Set();
@@ -176,16 +189,18 @@ function setActive(){
   DATES=computeDates(DAT);
   DMAX=DATES.length?DATES[DATES.length-1]:null;
   DMIN=DATES.length?DATES[0]:null;
+  computePending();
 }
 
 function rangeBounds(days){
   if(!DMAX) return {from:"0000",to:"9999",daysInRange:0,pdays:0};
   const iso=d=>d.toISOString().slice(0,10);
   const cntPrev=(pf,pt)=>pf?DATES.filter(d=>d>=pf&&d<=pt).length:0;
-  if(days==="all"){return {from:DMIN,to:DMAX,pfrom:null,pto:null,daysInRange:DATES.length,pdays:0,label:"All"};}
+  const cnt=(f,t)=>DATES.filter(d=>d>=f&&d<=t&&!PENDING.has(d)).length;   // complete days only
+  if(days==="all"){return {from:DMIN,to:DMAX,pfrom:null,pto:null,daysInRange:cnt(DMIN,DMAX),pdays:0,label:"All"};}
   if(days==="custom"){
     const f=state.from||DMIN, t=state.to||DMAX;
-    const dir=DATES.filter(d=>d>=f&&d<=t).length;
+    const dir=cnt(f,t);
     const len=Math.max(1,Math.round((new Date(t+"T00:00:00")-new Date(f+"T00:00:00"))/86400000)+1);
     const pto=new Date(f+"T00:00:00"); pto.setDate(pto.getDate()-1);
     const pfrom=new Date(pto); pfrom.setDate(pfrom.getDate()-(len-1));
@@ -197,7 +212,7 @@ function rangeBounds(days){
   const pto=new Date(from); pto.setDate(pto.getDate()-1);
   const pfrom=new Date(pto); pfrom.setDate(pfrom.getDate()-(days-1));
   const f=iso(from),t=iso(to);
-  const dir=DATES.filter(d=>d>=f&&d<=t).length;
+  const dir=cnt(f,t);
   const pfs=iso(pfrom),pts=iso(pto);
   return {from:f,to:t,pfrom:pfs,pto:pts,daysInRange:dir||1,pdays:cntPrev(pfs,pts),days};
 }
@@ -205,10 +220,11 @@ function parentDaily(tag){return DAT.parents[tag]?DAT.parents[tag].daily||{}:{};
 function catParent(tag){return CAT.parents.find(p=>p.tag===tag);}
 
 function seriesFor(daily,metricKey,from,to){
+  const salesSide=SALES_SIDE.has(metricKey);
   const out=[];
   for(const d of DATES){ if(d<from||d>to) continue;
     const rec=daily[d];
-    if(!rec){out.push({d,v:null});continue;}
+    if(!rec || (salesSide && PENDING.has(d))){out.push({d,v:null});continue;}   // gap, not a $0 crash
     const s=emptySum();addInto(s,rec);
     out.push({d,v:METRICS[metricKey].calc(s)});
   }
@@ -297,6 +313,10 @@ function render(){
   document.getElementById("mkt").textContent=(DAT.marketplace||"us").toUpperCase();
   document.getElementById("updated").textContent=DAT.generated?("Updated "+DAT.generated):"";
   renderModeTabs();renderRanges();renderCrumb();
+  const pend=[...PENDING].sort();
+  document.getElementById("pendbanner").innerHTML = pend.length
+    ? `<div class="note">⏳ <b>Sales &amp; traffic not yet posted for ${pend.map(d=>d.slice(5)).join(", ")}</b> — Amazon's business report lags ~1–2 days. Ad metrics (Spend, ACOS, Impressions, Clicks) are shown for ${pend.length>1?"these dates":"this date"}; Sales, TACOS, CVR &amp; Sessions fill in automatically once the report posts (or drop the day's Sellerboard/Seller-Central file to complete it now).</div>`
+    : "";
   if(state.mode==="ltsf") renderLtsf(); else renderCatalog();
   document.getElementById("foot").innerHTML = state.mode==="ltsf"
     ? `LTSF roster: ${LTSF_CATALOG.parentCount} parents · ${LTSF_CATALOG.childCount} aged SKUs · source ${LTSF_CATALOG.source||''}`
