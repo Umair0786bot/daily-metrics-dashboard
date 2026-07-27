@@ -204,7 +204,7 @@ function setActive(){
 
 function rangeBounds(days){
   if(!DMAX) return {from:"0000",to:"9999",daysInRange:0,pdays:0};
-  const iso=d=>d.toISOString().slice(0,10);
+  const iso=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; // local, TZ-safe (toISOString shifted the day)
   const cntPrev=(pf,pt)=>pf?DATES.filter(d=>d>=pf&&d<=pt).length:0;
   const cnt=(f,t)=>DATES.filter(d=>d>=f&&d<=t&&!PENDING.has(d)).length;   // complete days only
   if(days==="all"){return {from:DMIN,to:DMAX,pfrom:null,pto:null,daysInRange:cnt(DMIN,DMAX),pdays:0,label:"All"};}
