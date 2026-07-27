@@ -129,10 +129,10 @@ const fmtX   = v => v==null||isNaN(v)?"—":v.toFixed(2)+"x";
 const METRICS = {
   totalSales:   {label:"Total Sales",   fmt:fmtUSD,  calc:s=>s.totalSales,                       good:"up"},
   ppcSales:     {label:"PPC Sales",     fmt:fmtUSD,  calc:s=>s.ppcSales,                         good:"up"},
-  organicSales: {label:"Organic Sales", fmt:fmtUSD,  calc:s=>s.totalSales-s.ppcSales,            good:"up"},
-  organicPct:   {label:"Organic %",     fmt:fmtPct,  calc:s=>s.totalSales?(s.totalSales-s.ppcSales)/s.totalSales:null, good:"up"},
+  organicSales: {label:"Organic Sales", fmt:fmtUSD,  calc:s=>s.totalSales-(s._cppcSales!=null?s._cppcSales:s.ppcSales), good:"up"},
+  organicPct:   {label:"Organic %",     fmt:fmtPct,  calc:s=>s.totalSales?(s.totalSales-(s._cppcSales!=null?s._cppcSales:s.ppcSales))/s.totalSales:null, good:"up"},
   spend:        {label:"Ad Spend",      fmt:fmtUSD,  calc:s=>s.spend,                            good:"down"},
-  tacos:        {label:"TACOS",         fmt:fmtPct,  calc:s=>s.totalSales?s.spend/s.totalSales:null, good:"down"},
+  tacos:        {label:"TACOS",         fmt:fmtPct,  calc:s=>s.totalSales?(s._cspend!=null?s._cspend:s.spend)/s.totalSales:null, good:"down"},
   acos:         {label:"ACOS",          fmt:fmtPct,  calc:s=>s.ppcSales?s.spend/s.ppcSales:null, good:"down"},
   roas:         {label:"ROAS",          fmt:fmtX,    calc:s=>s.spend?s.ppcSales/s.spend:null,    good:"up"},
   unitsOrdered: {label:"Units Sold",    fmt:fmtNum,  calc:s=>s.unitsOrdered,                     good:"up"},
@@ -158,10 +158,20 @@ let PENDING = new Set();   // dates with ad data but no sales/traffic posted yet
 
 /* ---- helpers ---- */
 function emptySum(){const o={};BASE.forEach(k=>o[k]=0);return o;}
-function addInto(sum,rec){BASE.forEach(k=>{if(typeof rec[k]==="number")sum[k]+=rec[k];});}
+function addInto(sum,rec){
+  BASE.forEach(k=>{if(typeof rec[k]==="number")sum[k]+=rec[k];});
+  // carry complete-day ad totals (used only by blended metrics so pending days don't skew them)
+  if(typeof rec._cspend==="number")sum._cspend=(sum._cspend||0)+rec._cspend;
+  if(typeof rec._cppcSales==="number")sum._cppcSales=(sum._cppcSales||0)+rec._cppcSales;
+}
 function aggregate(daily,from,to){
-  const s=emptySum();let has=false;
-  for(const d in daily){ if(d>=from&&d<=to&&!PENDING.has(d)){addInto(s,daily[d]);has=true;} }
+  // include ALL days (PPC on pending days stays visible); track complete-day spend/ppcSales
+  const s=emptySum();let has=false,cs=0,cp=0;
+  for(const d in daily){ if(d>=from&&d<=to){
+    addInto(s,daily[d]);has=true;
+    if(!PENDING.has(d)){cs+=daily[d].spend||0;cp+=daily[d].ppcSales||0;}
+  } }
+  if(has){s._cspend=cs;s._cppcSales=cp;}
   return has?s:null;
 }
 function computePending(){
